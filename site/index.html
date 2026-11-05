@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATH Breakout Scanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* Layout: summary strip on top, screener list left, chart + signal sheet right; stacks on phones */
+  --bg:#f3f4f1; --panel:#ffffff; --ink:#16201f; --muted:#5f6b69; --line:#dfe3df; --accent:#0d6e6a;
+  --buy:#14804a; --wait:#b26a00; --avoid:#c0362c; --info:#2f5fb3; --dead:#7d8785;
+  --buy-bg:#e3f3ea; --wait-bg:#fbf0dc; --avoid-bg:#f9e4e1; --info-bg:#e5ecf8; --dead-bg:#eceeec;
+  --up:#14804a; --down:#c0362c; --grid:#eef0ed;
+  --display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1514; --panel:#161e1d; --ink:#e4ebe9; --muted:#93a19e; --line:#26312f; --accent:#4fbdb5;
+    --buy:#4cc485; --wait:#f0a830; --avoid:#f07068; --info:#7fa7f0; --dead:#8a9592;
+    --buy-bg:#14301f; --wait-bg:#33260d; --avoid-bg:#3a1a17; --info-bg:#18243b; --dead-bg:#1f2726;
+    --up:#4cc485; --down:#f07068; --grid:#1c2524; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1514; --panel:#161e1d; --ink:#e4ebe9; --muted:#93a19e; --line:#26312f; --accent:#4fbdb5;
+  --buy:#4cc485; --wait:#f0a830; --avoid:#f07068; --info:#7fa7f0; --dead:#8a9592;
+  --buy-bg:#14301f; --wait-bg:#33260d; --avoid-bg:#3a1a17; --info-bg:#18243b; --dead-bg:#1f2726;
+  --up:#4cc485; --down:#f07068; --grid:#1c2524; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--body)}
+.wrap{max-width:1320px;margin:0 auto;padding:20px 20px 48px;display:grid;gap:18px}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:8px 24px;border-bottom:2px solid var(--ink);padding-bottom:12px}
+h1{font:700 30px/1.1 var(--display);margin:0;letter-spacing:-.01em;text-wrap:balance}
+h1 small{display:block;font:500 14px/1.4 var(--body);color:var(--muted);letter-spacing:0;margin-top:4px}
+.asof{font:500 13px/1.5 var(--mono);color:var(--muted);text-align:right}
+.asof b{color:var(--ink);font-weight:600}
+h2{font:600 19px/1.2 var(--display);margin:0;text-wrap:balance}
+.tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.tile{all:unset;cursor:pointer;background:var(--panel);border:1px solid var(--line);border-top:4px solid var(--c,var(--line));border-radius:6px;padding:10px 12px;display:grid;gap:2px}
+.tile:hover{border-color:var(--c)}
+.tile[aria-pressed="true"]{background:var(--cbg,var(--panel));outline:2px solid var(--c);outline-offset:-1px}
+.tile:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tile .n{font:600 28px/1 var(--mono);font-variant-numeric:tabular-nums}
+.tile .l{font-size:13px;color:var(--muted)}
+.main{display:grid;grid-template-columns:minmax(300px,380px) 1fr;gap:18px;align-items:start}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px}
+.list{display:grid;grid-template-rows:auto 1fr;max-height:calc(100vh - 40px);position:sticky;top:20px;overflow:hidden}
+.filters{display:grid;gap:8px;padding:12px;border-bottom:1px solid var(--line)}
+.filters .row{display:flex;gap:8px}
+input,select{font:inherit;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:7px 9px;min-width:0;flex:1}
+input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.count{font-size:12px;color:var(--muted)}
+.rows{overflow-y:auto;margin:0;padding:0;list-style:none}
+.rows button{all:unset;box-sizing:border-box;width:100%;cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:10px 12px;border-bottom:1px solid var(--line);border-left:4px solid transparent}
+.rows button:hover{background:var(--bg)}
+.rows button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.rows button[aria-current="true"]{background:var(--bg);border-left-color:var(--accent)}
+.sym{font:600 15px/1.3 var(--mono)}
+.nm{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;grid-column:1}
+.pct{font:500 14px/1.3 var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+.tags{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.pill{display:inline-flex;align-items:center;font:600 11.5px/1 var(--body);padding:4px 7px;border-radius:99px;color:var(--c);background:var(--cbg);white-space:nowrap;letter-spacing:.01em}
+.tag{font:500 11.5px/1 var(--mono);padding:4px 6px;border-radius:4px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.s-BUY{--c:var(--buy);--cbg:var(--buy-bg)}
+.s-WAIT{--c:var(--wait);--cbg:var(--wait-bg)}
+.s-AVOID{--c:var(--avoid);--cbg:var(--avoid-bg)}
+.s-BRK{--c:var(--info);--cbg:var(--info-bg)}
+.s-INV{--c:var(--dead);--cbg:var(--dead-bg)}
+.s-NONE{--c:var(--muted);--cbg:var(--dead-bg)}
+.detail{display:grid;gap:18px}
+.chartcard{padding:14px 14px 10px;display:grid;gap:10px}
+.chead{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between}
+.chead .t{display:grid;gap:2px}
+.chead .t span{color:var(--muted);font-size:13px}
+.ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{all:unset;cursor:pointer;font:600 13px/1 var(--mono);padding:8px 12px;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+a.tv{font:600 13px/1 var(--body);color:var(--accent);text-decoration:none;border:1px solid var(--accent);border-radius:6px;padding:8px 11px}
+a.tv:hover{background:var(--accent);color:var(--panel)}
+a.tv:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#chart,#tvbox{height:430px;width:100%}
+#tvbox[hidden],#chart[hidden],.legend[hidden]{display:none}
+#tracker{display:grid;gap:12px}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.st-Open{color:var(--wait)} .st-Target{color:var(--buy)} .st-Stop{color:var(--avoid)}
+.pos{color:var(--buy)} .neg{color:var(--avoid)}
+#pnl{height:240px;width:100%}
+#tape{overflow:hidden;min-height:46px;padding:0 4px}
+#tape[hidden]{display:none}
+.src{display:inline-flex;align-items:center;gap:6px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--buy);display:inline-block}
+.dot.off{background:var(--avoid)}
+#ichart{height:300px;width:100%}
+.funnel{display:grid;gap:6px}
+.funnel>div{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.fstep{display:grid;border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:12px;color:var(--muted)}
+.fstep b{font:600 16px/1.3 var(--mono);color:var(--ink)}
+.farrow{color:var(--muted)}
+.irow{cursor:pointer}
+.irow:hover,.irow[aria-current="true"]{background:var(--bg)}
+.irow:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.ptitle{font-size:12.5px;color:var(--muted);margin-bottom:4px}
+.trades{max-height:440px;overflow-y:auto;border:1px solid var(--line);border-radius:6px}
+.trades thead th{position:sticky;top:0;background:var(--panel)}
+.trades td,.trades th{white-space:nowrap}
+a.lnk{color:var(--accent);text-decoration:none;font-weight:600}
+a.lnk:hover{text-decoration:underline}
+.tvnote{display:grid;place-items:center;height:100%;color:var(--muted);text-align:center;padding:20px;border:1px dashed var(--line);border-radius:6px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:18px;height:0;border-top:2px dashed var(--c);vertical-align:middle;margin-right:5px}
+.legend i.solid{border-top-style:solid}
+.sheet{display:grid;grid-template-columns:1.1fr 1fr;gap:0}
+.sheet .why{padding:16px;border-right:1px solid var(--line);display:grid;gap:10px;align-content:start}
+.big{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.big .pill{font-size:15px;padding:7px 12px}
+.why p{margin:0;max-width:62ch}
+.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.lv{border:1px solid var(--line);border-radius:6px;padding:8px 10px}
+.lv>span{display:block;font-size:12px;color:var(--muted)}
+.lv b{font:600 16px/1.3 var(--mono);font-variant-numeric:tabular-nums}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+td,th{padding:7px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-weight:500;color:var(--muted);white-space:nowrap}
+td{font-family:var(--mono);font-variant-numeric:tabular-nums}
+td.txt{font-family:var(--body)}
+tr:last-child td,tr:last-child th{border-bottom:0}
+.block{padding:16px;display:grid;gap:12px}
+.tablewrap{overflow-x:auto}
+.empty{border:1px dashed var(--line);border-radius:6px;padding:14px;color:var(--muted);font-size:14px}
+.method{display:grid;grid-template-columns:repeat(2,1fr);gap:12px 28px}
+.method h3{font:600 15px/1.3 var(--display);margin:0 0 4px}
+.method p,.method ul{margin:0;font-size:14px;color:var(--muted);max-width:62ch}
+.method ul{padding-left:18px}
+.foot{font-size:12.5px;color:var(--muted);max-width:90ch}
+@media (max-width:980px){
+  .main{grid-template-columns:1fr}
+  .list{position:static;max-height:460px}
+  .tiles{grid-template-columns:repeat(3,1fr)}
+  .sheet{grid-template-columns:1fr}
+  .sheet .why{border-right:0;border-bottom:1px solid var(--line)}
+}
+@media (max-width:560px){
+  .wrap{padding:16px 16px 40px}
+  h1{font-size:25px}
+  .asof{text-align:left}
+  .tiles{grid-template-columns:repeat(2,1fr)}
+  #chart,#tvbox{height:360px}
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .levels{grid-template-columns:repeat(2,1fr)}
+  .method{grid-template-columns:1fr}
+  td,th{padding:7px 10px}
+}
+@media (prefers-reduced-motion: reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ATH Breakout Scanner<small>Hammer &amp; shooting star on daily and weekly charts · Nifty 500</small></h1>
+    <div class="asof" id="asof">Loading data…</div>
+  </header>
+
+  <div class="tiles" id="tiles" role="group" aria-label="Filter by signal"></div>
+  <div id="tape" class="panel" hidden aria-label="Live prices from TradingView"></div>
+
+  <div class="main">
+    <section class="panel list" aria-label="Screener">
+      <div class="filters">
+        <input id="q" type="search" placeholder="Search symbol or company" aria-label="Search symbol or company">
+        <div class="row">
+          <select id="fPat" aria-label="Pattern"><option value="">All patterns</option><option>Hammer</option><option>Shooting star</option></select>
+          <select id="fTf" aria-label="Timeframe"><option value="">Daily + weekly</option><option value="D">Daily</option><option value="W">Weekly</option></select>
+        </div>
+        <div class="count" id="count"></div>
+      </div>
+      <ul class="rows" id="rows"></ul>
+    </section>
+
+    <div class="detail">
+      <section class="panel chartcard" aria-label="Chart">
+        <div class="chead">
+          <div class="t"><h2 id="cTitle">—</h2><span id="cSub"></span></div>
+          <div class="ctrl">
+            <div class="seg" role="group" aria-label="Chart source">
+              <button id="mScan" aria-pressed="true">Scan view</button><button id="mTV" aria-pressed="false" title="Live TradingView chart of the BSE listing">TradingView live</button>
+            </div>
+            <div class="seg" role="group" aria-label="Timeframe">
+              <button id="bD" aria-pressed="true">1D</button><button id="bW" aria-pressed="false">1W</button>
+            </div>
+            <a class="tv" id="tvLink" href="https://www.tradingview.com/" target="_blank" rel="noopener">Open in TradingView ↗</a>
+          </div>
+        </div>
+        <div id="chart"></div>
+        <div id="tvbox" hidden></div>
+        <div class="legend" id="legend"></div>
+      </section>
+
+      <section class="panel sheet" aria-label="Signal">
+        <div class="why">
+          <div class="big" id="sigBig"></div>
+          <p id="sigWhy"></p>
+          <div class="levels" id="levels"></div>
+        </div>
+        <div class="tablewrap"><table id="sigTable"></table></div>
+      </section>
+
+      <section class="panel block" aria-label="Paper portfolio">
+        <div class="chead">
+          <div class="t"><h2>Paper portfolio</h2><span>A dummy buy of 1 share every time a BUY signal fires, held until its stop or 1:3 target is hit.</span></div>
+          <div class="seg" role="group" aria-label="Portfolio period">
+            <button id="pLive" aria-pressed="false">Live</button><button id="pBT" aria-pressed="false">Backtest</button><button id="pID" aria-pressed="false">Intraday 5-min</button>
+          </div>
+        </div>
+        <div id="tracker"></div>
+      </section>
+
+      <section class="panel block" aria-label="Method">
+        <h2>How signals are decided</h2>
+        <div class="method">
+          <div><h3>Hammer</h3><p>Lower wick at least 2× the body and 60% of the candle's range, upper wick under 15%, range at least 0.8× ATR(14), printed at a fresh 5-bar low. It counts only while price stays above the hammer's low.</p></div>
+          <div><h3>Shooting star</h3><p>The mirror image: long upper wick, small lower wick, printed at a fresh 5-bar high. A shooting star within 5% of the prior ATH is treated as a rejection, so the stock is marked AVOID.</p></div>
+          <div><h3>BUY</h3><ul><li>A hammer that has held, on the daily or weekly chart</li><li>Daily close above the prior ATH (highest high before the last 10 sessions)</li><li>Breakout volume ≥ 1.5× the 50-day average, close in the top 40% of the candle</li><li>No more than 5% above the ATH, and stop no more than 10% below entry</li></ul></div>
+          <div><h3>Levels</h3><ul><li>Stop: 0.5% below the hammer low</li><li>Target: entry + 3 × (entry − stop), a fixed 1:3</li><li>WAIT: hammer held, price within 10% of ATH, no breakout close yet</li><li>Quantity: 1 share. Confirmed on both timeframes = High confidence</li></ul></div>
+        </div>
+        <p class="foot">Scans the last 10 daily sessions and the last 3 completed weeks, refreshed after each NSE close. Entries are logged at the signal day's close; if a stop and target fall on the same day, the stop is assumed. Prices are NSE end-of-day data from Yahoo Finance; scan charts are drawn with TradingView Lightweight Charts™. This is a rules-based screen for research, not investment advice.</p>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+(function(){
+const SIG={ 'BUY':{cls:'s-BUY',label:'BUY'}, 'WAIT':{cls:'s-WAIT',label:'WAIT'}, 'Breakout (no hammer)':{cls:'s-BRK',label:'Breakout, no hammer'},
+  'AVOID':{cls:'s-AVOID',label:'AVOID'}, 'Invalidated':{cls:'s-INV',label:'Invalidated'}, 'No setup':{cls:'s-NONE',label:'No setup'} };
+const ORDER=['BUY','WAIT','Breakout (no hammer)','AVOID','Invalidated','No setup'];
+const $=id=>document.getElementById(id);
+const inr=v=>v==null?'—':'₹'+Number(v).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtD=s=>{const d=new Date(s+'T00:00:00');return d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})};
+const fmtDs=s=>{const d=new Date(s+'T00:00:00');return d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tok=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+let DATA=null, sel=null, tf='D', mode='scan', sigFilter='', chart=null, candle=null, vol=null, lines=[];
+const isDark=()=>{const t=document.documentElement.dataset.theme;return t?t==='dark':matchMedia('(prefers-color-scheme: dark)').matches};
+const tvSym=s=>'NSE:'+s.replace(/[&-]/g,'_');
+// TradingView's free widget does not serve NSE data, so the embedded chart uses the stock's BSE listing
+const tvWidgetSym=s=>'BSE:'+s.replace(/[&-]/g,'_');
+
+fetch('data.json').then(r=>{if(!r.ok)throw new Error(r.status);return r.json()}).then(d=>{DATA=d;init()})
+ .catch(e=>{$('asof').textContent='Could not load the scan data. Reload the page to try again.'});
+
+function init(){
+  $('asof').innerHTML='Daily close <b>'+fmtD(DATA.asof)+'</b><br>Weekly to week of <b>'+fmtDs(DATA.lastWeek)+'</b> · '+DATA.universe+' stocks scanned';
+  const counts={}; DATA.stocks.forEach(s=>counts[s.signal]=(counts[s.signal]||0)+1);
+  $('tiles').innerHTML=ORDER.map(k=>`<button class="tile ${SIG[k].cls}" data-sig="${esc(k)}" aria-pressed="false"><span class="n">${counts[k]||0}</span><span class="l">${SIG[k].label}</span></button>`).join('');
+  $('tiles').querySelectorAll('.tile').forEach(b=>b.addEventListener('click',()=>{
+    sigFilter = sigFilter===b.dataset.sig ? '' : b.dataset.sig;
+    $('tiles').querySelectorAll('.tile').forEach(x=>x.setAttribute('aria-pressed',x.dataset.sig===sigFilter));
+    renderList();
+  }));
+  ['q','fPat','fTf'].forEach(id=>$(id).addEventListener('input',renderList));
+  $('bD').addEventListener('click',()=>setTf('D')); $('bW').addEventListener('click',()=>setTf('W'));
+  $('mScan').addEventListener('click',()=>setMode('scan')); $('mTV').addEventListener('click',()=>setMode('tv'));
+  $('pLive').addEventListener('click',()=>{userPicked=true;renderTracker('live')}); $('pBT').addEventListener('click',()=>{userPicked=true;renderTracker('backtest')}); $('pID').addEventListener('click',()=>{userPicked=true;renderTracker('intraday')});
+  makeChart();
+  renderTracker();
+  renderList();
+  renderTape();
+  if(LIVE_API){ loadLive(); setInterval(loadLive,Math.max(15,CFG.refreshSeconds||60)*1000); }
+  select(DATA.stocks[0].sym,false);
+  const mq=matchMedia('(prefers-color-scheme: dark)'); mq.addEventListener&&mq.addEventListener('change',retheme);
+  new MutationObserver(retheme).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+}
+
+function filtered(){
+  const q=$('q').value.trim().toLowerCase(), p=$('fPat').value, t=$('fTf').value;
+  return DATA.stocks.filter(s=>(!sigFilter||s.signal===sigFilter)
+    &&(!q||s.sym.toLowerCase().includes(q)||s.name.toLowerCase().includes(q))
+    &&(!p&&!t||s.patterns.some(x=>(!p||x.kind===p)&&(!t||x.tf===t))));
+}
+function renderList(){
+  const list=filtered();
+  $('count').textContent=list.length+' of '+DATA.stocks.length+' stocks with a pattern';
+  $('rows').innerHTML=list.map(s=>{
+    const tags=s.patterns.map(p=>`<span class="tag">${p.tf} ${p.kind==='Hammer'?'Hammer':'Star'} ${fmtDs(p.date)}</span>`).join('');
+    return `<li><button data-sym="${esc(s.sym)}" aria-current="${sel&&sel.sym===s.sym}">
+      <span class="sym">${esc(s.sym)}</span><span class="pct" title="Close vs prior ATH">${s.pct>0?'+':''}${s.pct.toFixed(1)}%</span>
+      <span class="nm">${esc(s.name)}</span><span class="pill ${SIG[s.signal].cls}">${SIG[s.signal].label}</span>
+      <span class="tags">${tags}</span></button></li>`}).join('') || '<li class="empty" style="margin:12px">No stocks match these filters.</li>';
+  $('rows').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>select(b.dataset.sym,true)));
+}
+function select(sym,scroll){
+  sel=DATA.stocks.find(s=>s.sym===sym);
+  $('rows').querySelectorAll('button').forEach(b=>b.setAttribute('aria-current',b.dataset.sym===sym));
+  // default to the timeframe the pattern appeared on
+  const tfs=new Set(sel.patterns.map(p=>p.tf)); if(!tfs.has(tf)) tf=tfs.has('D')?'D':'W';
+  $('cTitle').textContent=sel.name;
+  $('cSub').textContent='NSE: '+sel.sym+(sel.industry?' · '+sel.industry:'')+' · 50-day avg turnover ₹'+sel.turnover.toLocaleString('en-IN')+' cr';
+  $('tvLink').href='https://www.tradingview.com/chart/?symbol='+encodeURIComponent(tvSym(sel.sym));
+  renderSheet(); drawChart(); if(mode==='tv') drawTV();
+  if(scroll && matchMedia('(max-width:980px)').matches) document.querySelector('.chartcard').scrollIntoView({block:'start'});
+}
+function setTf(t){tf=t;drawChart();if(mode==='tv')drawTV()}
+function setMode(m){
+  mode=m;
+  $('mScan').setAttribute('aria-pressed',m==='scan'); $('mTV').setAttribute('aria-pressed',m==='tv');
+  $('chart').hidden=m==='tv'; $('legend').hidden=m==='tv'; $('tvbox').hidden=m!=='tv';
+  if(m==='tv') drawTV(); else $('tvbox').innerHTML='';
+}
+// Official TradingView Advanced Chart widget (works on your own host; blocked inside claude.ai pages)
+function drawTV(){
+  const box=$('tvbox'); box.innerHTML='';
+  const c=document.createElement('div'); c.className='tradingview-widget-container'; c.style.height='100%';
+  const w=document.createElement('div'); w.className='tradingview-widget-container__widget'; w.style.height='100%';
+  const s=document.createElement('script'); s.async=true;
+  s.onerror=()=>{box.innerHTML='<div class="tvnote">This page can\'t load the live TradingView chart here. Use “Open in TradingView”, or host the site yourself (see README).</div>'};
+  s.src='https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+  s.text=JSON.stringify({autosize:true,symbol:tvWidgetSym(sel.sym),interval:tf==='D'?'D':'W',timezone:'Asia/Kolkata',
+    theme:isDark()?'dark':'light',style:'1',locale:'en',allow_symbol_change:true,hide_volume:false,
+    backgroundColor:tok('--panel'),support_host:'https://www.tradingview.com'});
+  c.append(w,s); box.appendChild(c);
+}
+
+function chartOpts(){
+  return {autoSize:true,
+    layout:{background:{type:'solid',color:tok('--panel')},textColor:tok('--muted'),fontFamily:'IBM Plex Mono, ui-monospace, monospace',fontSize:11},
+    grid:{vertLines:{color:tok('--grid')},horzLines:{color:tok('--grid')}},
+    rightPriceScale:{borderColor:tok('--line')},timeScale:{borderColor:tok('--line'),rightOffset:4},
+    crosshair:{mode:0}, localization:{priceFormatter:p=>'₹'+p.toLocaleString('en-IN',{maximumFractionDigits:2})}};
+}
+function makeChart(){
+  chart=LightweightCharts.createChart($('chart'),chartOpts());
+  candle=chart.addCandlestickSeries({borderVisible:false});
+  vol=chart.addHistogramSeries({priceScaleId:'vol',priceFormat:{type:'volume'},lastValueVisible:false,priceLineVisible:false});
+  chart.priceScale('vol').applyOptions({scaleMargins:{top:.82,bottom:0}});
+  retheme(true);
+}
+function retheme(skipDraw){
+  if(!chart) return;
+  chart.applyOptions(chartOpts());
+  candle.applyOptions({upColor:tok('--up'),downColor:tok('--down'),wickUpColor:tok('--up'),wickDownColor:tok('--down'),priceLineColor:tok('--accent'),priceLineStyle:3});
+  if(skipDraw!==true && sel){ drawChart(); if(mode==='tv') drawTV(); if(DATA&&DATA.paper) renderTracker(); tapeKey=''; renderTape(); }
+}
+function drawChart(){
+  $('bD').setAttribute('aria-pressed',tf==='D'); $('bW').setAttribute('aria-pressed',tf==='W');
+  const bars=tf==='D'?sel.daily:sel.weekly, up=tok('--up'), dn=tok('--down'), muted=tok('--muted');
+  candle.setData(bars.map(b=>({time:b[0],open:b[1],high:b[2],low:b[3],close:b[4]})));
+  vol.setData(bars.map(b=>({time:b[0],value:b[5],color:(b[4]>=b[1]?up:dn)+'55'})));
+  const times=new Set(bars.map(b=>b[0]));
+  const mk=sel.patterns.filter(p=>p.tf===tf&&times.has(p.date)).map(p=>p.kind==='Hammer'
+    ?{time:p.date,position:'belowBar',shape:'arrowUp',color:tok('--buy'),text:'Hammer'}
+    :{time:p.date,position:'aboveBar',shape:'arrowDown',color:tok('--avoid'),text:'Shooting star'});
+  if(tf==='D'&&sel.breakout&&times.has(sel.breakout.date)) mk.push({time:sel.breakout.date,position:'aboveBar',shape:'circle',color:tok('--info'),text:'ATH close'});
+  mk.sort((a,b)=>a.time<b.time?-1:1); candle.setMarkers(mk);
+  lines.forEach(l=>candle.removePriceLine(l)); lines=[];
+  const L=[]; const add=(price,color,title,style)=>{lines.push(candle.createPriceLine({price,color,lineWidth:style===0?2:1,lineStyle:style,axisLabelVisible:true,title}));L.push({color,title,solid:style===0})};
+  add(sel.ath,tok('--ink'),'Prior ATH',2);
+  if(sel.stop!=null) add(sel.stop,tok('--avoid'),'Stop',2);
+  if(sel.target!=null) add(sel.target,tok('--buy'),'Target 1:3',1);
+  const st=sel.patterns.filter(p=>p.kind==='Shooting star'); if(st.length&&sel.signal==='AVOID') add(Math.max(...st.map(p=>p.high)),tok('--wait'),'Star high',1);
+  $('legend').innerHTML=L.map(l=>`<span><i style="--c:${l.color}" class="${l.solid?'solid':''}"></i>${l.title}</span>`).join('')
+    +'<span>▲ hammer · ▼ shooting star'+(tf==='D'?' · ● first close above ATH':'')+'</span>';
+  const n=bars.length; chart.timeScale().setVisibleLogicalRange({from:Math.max(0,n-(tf==='D'?130:110)),to:n+3});
+}
+function renderSheet(){
+  const s=sel, S=SIG[s.signal];
+  $('sigBig').innerHTML=`<span class="pill ${S.cls}">${S.label}</span><span class="pill s-NONE">Confidence: ${s.conf}</span>`;
+  $('sigWhy').textContent=s.reason;
+  const risk=s.risk!=null?`${inr(s.risk)} (${(s.risk/s.entry*100).toFixed(1)}%)`:'—';
+  $('levels').innerHTML=[['Entry'+(s.signal==='WAIT'?' trigger':''),inr(s.entry)],['Stop loss',inr(s.stop)],['Target',inr(s.target)],['Risk / share',risk],['Close',inr(s.close)],['vs prior ATH',(s.pct>0?'+':'')+s.pct.toFixed(1)+'%']]
+    .map(([a,b])=>`<div class="lv"><span>${a}</span><b>${b}</b></div>`).join('');
+  const tfs=[...new Set(s.patterns.map(p=>p.tf==='D'?'Daily':'Weekly'))].join(' + ');
+  const pats=s.patterns.map(p=>`${p.kind} (${p.tf==='D'?'daily, '+fmtDs(p.date):'weekly, week of '+fmtDs(p.date)})`).join('; ');
+  const bo=s.breakout, volc=bo?(bo.volx>=1.5?'Yes':'No')+` (${bo.volx}× avg)`:'No breakout yet';
+  const rows=[['Stock name',s.name,1],['Trading symbol','NSE: '+s.sym],['Timeframe',tfs,1],['Pattern identified',pats,1],
+    ['Previous ATH',inr(s.ath)+' · '+fmtD(s.athDate)],['Current price',inr(s.close)],['Breakout status',s.status,1],['Volume confirmation',volc,1],
+    ['Entry price',inr(s.entry)],['Stop loss',inr(s.stop)],['Target price',inr(s.target)],['Risk-reward',s.target!=null?'1:3':'—'],
+    ['Quantity',s.signal==='BUY'?'1 share':'—',1],['Signal',S.label,1],['Confidence',s.conf,1]];
+  $('sigTable').innerHTML='<tbody>'+rows.map(([a,b,t])=>`<tr><th scope="row">${a}</th><td${t?' class="txt"':''}>${esc(b)}</td></tr>`).join('')+'</tbody>';
+}
+let book=null, pnlChart=null, iChart=null, iSel=null;
+// ---------- live feed from TradingView alerts (via your Cloudflare Worker) ----------
+const CFG=window.ATH_CONFIG||{}; const LIVE_API=(CFG.liveApi||'').trim().replace(/\/+$/,'');
+let LIVE=null, LIVE_ERR=null, tapeKey='', userPicked=false;
+function summarize(T){
+  const sum=a=>a.reduce((x,y)=>x+y,0), closed=T.filter(t=>t.status!=='Open');
+  const wins=closed.filter(t=>t.status==='Target hit'), losses=closed.filter(t=>t.status==='Stop hit');
+  const gain=sum(wins.map(t=>t.ret)), loss=-sum(losses.map(t=>t.ret)), inv=sum(T.map(t=>t.entry)), pnl=sum(T.map(t=>t.pnl));
+  const r=(v,d)=>Math.round(v*10**d)/10**d;
+  return {trades:T.length,open:T.length-closed.length,closed:closed.length,wins:wins.length,losses:losses.length,
+    winRate:closed.length?r(wins.length/closed.length*100,1):null,pnl:r(pnl,2),invested:r(inv,2),retOnCapital:inv?r(pnl/inv*100,2):null,
+    avgRet:closed.length?r(sum(closed.map(t=>t.ret))/closed.length,2):null,profitFactor:loss?r(gain/loss,2):null,
+    avgDays:closed.length?r(sum(closed.map(t=>t.days))/closed.length,1):null};
+}
+function fromWorker(x){
+  const now=x.exit_price??x.last_price??x.entry, end=x.exit_date||x.last_date||x.entry_date;
+  return {sym:x.sym,name:x.name||x.sym,entryDate:x.entry_date,entry:x.entry,stop:x.stop,target:x.target,qty:x.qty||1,conf:x.conf,
+    status:x.status,current:x.last_price??x.entry,exitPrice:x.exit_price,exitDate:x.exit_date,
+    pnl:Math.round((now-x.entry)*(x.qty||1)*100)/100,ret:Math.round((now/x.entry-1)*10000)/100,
+    days:Math.max(0,Math.round((new Date(end)-new Date(x.entry_date))/864e5))};
+}
+async function loadLive(){
+  if(!LIVE_API) return;
+  try{
+    const r=await fetch(LIVE_API+'/api/trades',{cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const d=await r.json(); const T=(d.trades||[]).map(fromWorker);
+    LIVE={trades:T,summary:summarize(T),updated:d.updated}; LIVE_ERR=null;
+  }catch(e){ LIVE_ERR='Could not reach the live feed ('+e.message+'). Check liveApi in config.js and that the Worker is deployed.'; }
+  if(DATA){ if(book==='live') renderTracker('live'); else if(!userPicked&&LIVE&&LIVE.trades.length) renderTracker('live'); renderTape(); }
+}
+function renderTape(){
+  const box=$('tape'); if(!DATA) return;
+  const syms=[...new Set([...(LIVE?LIVE.trades.filter(t=>t.status==='Open').map(t=>t.sym):[]),
+    ...DATA.stocks.filter(s=>['BUY','WAIT'].includes(s.signal)).map(s=>s.sym)])].slice(0,20);
+  if(!syms.length){box.hidden=true;return}
+  const key=syms.join(',')+'|'+isDark(); if(key===tapeKey) return; tapeKey=key;
+  box.hidden=false; box.innerHTML='';
+  const c=document.createElement('div'); c.className='tradingview-widget-container';
+  const w=document.createElement('div'); w.className='tradingview-widget-container__widget';
+  const s=document.createElement('script'); s.async=true; s.src='https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js';
+  s.text=JSON.stringify({symbols:syms.map(x=>({proName:tvWidgetSym(x),title:x})),showSymbolLogo:false,isTransparent:true,displayMode:'adaptive',colorTheme:isDark()?'dark':'light',locale:'en'});
+  s.onerror=()=>{box.hidden=true};
+  c.append(w,s); box.appendChild(c);
+}
+function renderTracker(which){
+  const PP=DATA.paper; if(!PP){$('tracker').innerHTML='<div class="empty">Paper portfolio data is missing from this scan.</div>';return}
+  book = which || book || ((LIVE&&LIVE.trades.length)||PP.live.trades.length?'live':'backtest');
+  $('pLive').setAttribute('aria-pressed',book==='live'); $('pBT').setAttribute('aria-pressed',book==='backtest'); $('pID').setAttribute('aria-pressed',book==='intraday');
+  if(book==='intraday'){ renderIntraday(); return; }
+  if(iChart){iChart.remove();iChart=null}
+  const useTV = book==='live' && LIVE;
+  const B=useTV?LIVE:PP[book], T=B.trades, S=B.summary;
+  const pct=v=>v==null?'—':`<span class="${v>0?'pos':v<0?'neg':''}">${v>0?'+':''}${v.toFixed(1)}%</span>`;
+  const sgn=v=>`<span class="${v>0?'pos':v<0?'neg':''}">${v>0?'+':''}${inr(v)}</span>`;
+  const period = useTV ? `<span class="src"><i class="dot"></i>Live from TradingView alerts · updated ${new Date(LIVE.updated).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}, refreshes every ${CFG.refreshSeconds||60}s.</span> Prices update at each daily close; open the TradingView chart for live ticks.`
+    : book==='live' ? `${LIVE_ERR?'<span class="src"><i class="dot off"></i>'+esc(LIVE_ERR)+'</span> Showing the daily-scan log instead. ':''}Live since ${fmtD(PP.liveStart)}. New BUY signals are added after each close.`
+    : `Rules replayed on every trading day from ${fmtD(PP.backtestStart)} until live tracking began on ${fmtD(PP.liveStart)}, using only the data available on each day. Open trades are valued at the latest close.`;
+  if(!T.length){
+    $('tracker').innerHTML=`<p class="foot">${period}</p><div class="empty">${useTV?'No TradingView alerts received yet. When an alert fires, its trade appears here within a minute.':`No BUY signals since ${fmtD(PP.liveStart)}, so no dummy trades yet.`} The first one will appear here automatically, with its entry, stop, target and running P&amp;L. Switch to Backtest to see how the same rules did over the last 3 years.</div>`;
+    if(pnlChart){pnlChart.remove();pnlChart=null}
+    return;
+  }
+  const stats=[['Trades',S.trades+(S.open?` <small style="font-size:12px;color:var(--muted)">(${S.open} open)</small>`:'')],
+    ['Win rate',S.winRate==null?'—':S.winRate+'%'],['Avg return / trade',pct(S.avgRet)],
+    ['Total P&amp;L',sgn(S.pnl)],['Profit factor',S.profitFactor==null?'—':S.profitFactor+'×'],
+    ['Amount invested',inr(S.invested)],['P&amp;L ÷ invested',pct(S.retOnCapital)],['Avg days held',S.avgDays??'—'],
+    ['Targets hit',S.wins],['Stops hit',S.losses]];
+  $('tracker').innerHTML=`<p class="foot">${period}</p>`
+   +'<div class="stats">'+stats.map(([a,b])=>`<div class="lv"><span>${a}</span><b>${b}</b></div>`).join('')+'</div>'
+   +'<div><div class="ptitle">Cumulative P&amp;L, ₹ (1 share per trade)</div><div id="pnl"></div></div>'
+   +'<div class="tablewrap trades"><table><thead><tr><th>Stock</th><th>Bought</th><th>Entry</th><th>Stop</th><th>Target</th><th>Exit / now</th><th>Return</th><th>P&amp;L</th><th>Days</th><th>Status</th></tr></thead><tbody>'
+   +T.slice().reverse().map(p=>`<tr><td><a class="lnk" href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym(p.sym))}" target="_blank" rel="noopener">${esc(p.sym)}</a></td><td>${fmtD(p.entryDate)}</td><td>${inr(p.entry)}</td><td>${inr(p.stop)}</td><td>${inr(p.target)}</td>
+     <td>${inr(p.exitPrice??p.current)}${p.exitDate?' · '+fmtDs(p.exitDate):''}</td><td>${pct(p.ret)}</td><td>${sgn(p.pnl||0)}</td><td>${p.days??'—'}</td><td class="txt st-${p.status.split(' ')[0]}">${p.status}</td></tr>`).join('')
+   +'</tbody></table></div>'
+   +'<p class="foot">Profit factor compares the % gains of winning trades with the % losses of losing ones, so a costly share doesn\'t skew it. The backtest uses today\'s Nifty 500 members, so stocks that dropped out of the index are missing, which flatters past results.</p>';
+  drawPnl(T);
+}
+function renderIntraday(){
+  if(pnlChart){pnlChart.remove();pnlChart=null}
+  const I=DATA.intraday;
+  if(!I||I.error&&!I.trades.length){$('tracker').innerHTML='<div class="empty">The 5-minute data could not be downloaded in the last run. It will be retried after the next close.</div>';return}
+  const T=I.trades, S=I.summary, F=I.funnel;
+  const pct=v=>v==null?'—':`<span class="${v>0?'pos':v<0?'neg':''}">${v>0?'+':''}${v.toFixed(2)}%</span>`;
+  const sgn=v=>`<span class="${v>0?'pos':v<0?'neg':''}">${v>0?'+':''}${inr(v)}</span>`;
+  const rr=v=>v==null?'—':`<span class="${v>0?'pos':v<0?'neg':''}">${v>0?'+':''}${v.toFixed(2)}R</span>`;
+  const win=I.window&&I.window[0]?`${fmtD(I.window[0])} – ${fmtD(I.window[1])}`:'';
+  let h=`<p class="foot">Daily filter plus 5-minute entry. A stock is watched on days it closed within 3% of its all-time high the day before. It needs a 5-minute breakout above that high, then a 5-minute hammer that retests the level on 1.5× normal volume. The trade buys 1 share at the next candle, with the stop just under the hammer and a 1:3 target, and is squared off by 3:15 PM. Each evening the day's 5-minute candles are replayed and any trade is added here. Results are after Zerodha intraday charges and 0.02% slippage on each side.</p>`;
+  if(F) h+=`<div class="funnel"><span class="ptitle">Setups found, ${win}</span><div>${[['Stock-days near ATH',F.watched],['5-min breakouts',F.breakout],['Hammer at the level',F.hammerAtLevel],['Volume confirmed',F.volumeOk],['Trades taken',F.traded]].map(([a,b],i)=>`<span class="fstep"><b>${b}</b>${a}</span>`).join('<span class="farrow">→</span>')}</div></div>`;
+  if(!T.length){$('tracker').innerHTML=h+'<div class="empty">No 5-minute trades yet.</div>';return}
+  const stats=[['Trades',S.trades],['Win rate',S.winRate==null?'—':S.winRate+'%'],['Avg result',rr(S.avgR)],['Net P&amp;L',sgn(S.pnl)],['Charges paid',inr(S.costs)],
+    ['Avg stop distance',S.avgRisk==null?'—':S.avgRisk+'%'],['Targets hit',S.targets],['Stops hit',S.stops],['Squared off',S.squared],['Profit factor',S.profitFactor==null?'—':S.profitFactor+'×']];
+  h+='<div class="stats">'+stats.map(([a,b])=>`<div class="lv"><span>${a}</span><b>${b}</b></div>`).join('')+'</div>';
+  h+='<div><div class="ptitle" id="iTitle"></div><div id="ichart"></div></div>';
+  h+='<div class="tablewrap trades"><table><thead><tr><th>Date</th><th>Stock</th><th>ATH level</th><th>Entry</th><th>Stop</th><th>Target</th><th>Exit</th><th>Result</th><th>R</th><th>Net P&amp;L</th></tr></thead><tbody>'
+   +T.map((t,k)=>({t,k})).reverse().map(({t,k})=>`<tr class="irow" data-k="${k}" tabindex="0"><td>${fmtD(t.date)}</td><td><b>${esc(t.sym)}</b></td><td>${inr(t.level)}</td><td>${inr(t.entry)} · ${t.entryTime}</td><td>${inr(t.stop)}</td><td>${inr(t.target)}</td><td>${inr(t.exitPrice)} · ${t.exitTime}</td><td class="txt st-${t.status.split(' ')[0]}">${t.status}</td><td>${rr(t.r)}</td><td>${sgn(t.pnl)}</td></tr>`).join('')
+   +'</tbody></table></div>';
+  h+='<p class="foot">Select a trade to see its 5-minute chart. With only about 60 days of 5-minute history available, the early record is too small to judge the strategy. Let it build up over a few months.</p>';
+  $('tracker').innerHTML=h;
+  $('tracker').querySelectorAll('.irow').forEach(r=>{const go=()=>drawIntra(+r.dataset.k);r.addEventListener('click',go);r.addEventListener('keydown',e=>{if(e.key==='Enter')go()})});
+  drawIntra(iSel!=null&&T[iSel]?iSel:T.length-1);
+}
+function drawIntra(k){
+  const t=DATA.intraday.trades[k]; iSel=k; if(!t||!t.bars) return;
+  $('tracker').querySelectorAll('.irow').forEach(r=>r.setAttribute('aria-current',+r.dataset.k===k));
+  $('iTitle').textContent=`${t.name} · ${fmtD(t.date)} · 5-minute chart`;
+  if(iChart){iChart.remove();iChart=null}
+  const o=chartOpts(); o.timeScale={...o.timeScale,timeVisible:true,secondsVisible:false};
+  iChart=LightweightCharts.createChart($('ichart'),o);
+  const c=iChart.addCandlestickSeries({borderVisible:false,upColor:tok('--up'),downColor:tok('--down'),wickUpColor:tok('--up'),wickDownColor:tok('--down'),priceLineVisible:false,lastValueVisible:false});
+  c.setData(t.bars.map(b=>({time:b[0],open:b[1],high:b[2],low:b[3],close:b[4]})));
+  const at=hm=>{const b=t.bars.find(b=>new Date(b[0]*1000).toISOString().slice(11,16)===hm);return b?b[0]:null};
+  const mk=[]; const h=at(t.hammerTime),e=at(t.entryTime),x=at(t.exitTime);
+  if(h) mk.push({time:h,position:'belowBar',shape:'arrowUp',color:tok('--buy'),text:'Hammer'});
+  if(e) mk.push({time:e,position:'belowBar',shape:'circle',color:tok('--accent'),text:'Buy'});
+  if(x) mk.push({time:x,position:'aboveBar',shape:'square',color:t.pnl>0?tok('--buy'):tok('--avoid'),text:'Exit'});
+  mk.sort((a,b)=>a.time-b.time); c.setMarkers(mk);
+  [[t.level,tok('--ink'),'ATH level',2],[t.stop,tok('--avoid'),'Stop',2],[t.target,tok('--buy'),'Target',1],[t.entry,tok('--accent'),'Entry',3]]
+    .forEach(([p,col,ti,st])=>c.createPriceLine({price:p,color:col,lineWidth:1,lineStyle:st,axisLabelVisible:true,title:ti}));
+  iChart.timeScale().fitContent();
+}
+function drawPnl(T){
+  if(pnlChart){pnlChart.remove();pnlChart=null}
+  const ev=[]; T.forEach(t=>ev.push({d:t.exitDate||DATA.asof,v:t.pnl||0}));
+  ev.sort((a,b)=>a.d<b.d?-1:1);
+  const pts=[]; let cum=0; ev.forEach(e=>{cum+=e.v; const v=Math.round(cum*100)/100; if(pts.length&&pts[pts.length-1].time===e.d) pts[pts.length-1].value=v; else pts.push({time:e.d,value:v})});
+  const o=chartOpts(); o.localization={priceFormatter:p=>'₹'+Math.round(p).toLocaleString('en-IN')};
+  pnlChart=LightweightCharts.createChart($('pnl'),o);
+  const s=pnlChart.addBaselineSeries({baseValue:{type:'price',price:0},lineWidth:2,
+    topLineColor:tok('--buy'),topFillColor1:tok('--buy')+'40',topFillColor2:tok('--buy')+'08',
+    bottomLineColor:tok('--avoid'),bottomFillColor1:tok('--avoid')+'08',bottomFillColor2:tok('--avoid')+'40'});
+  s.setData(pts); pnlChart.timeScale().fitContent();
+}
+})();
+</script>
+</body>
+</html>

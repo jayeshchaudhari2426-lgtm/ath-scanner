@@ -1,0 +1,191 @@
+// ATH Breakout · Hammer & Shooting Star
+// The same rules as the website's daily scan, running on TradingView's own live data.
+// Use it on a 1D chart. Each BUY is a dummy 1-share trade with a 1:3 target.
+// Alerts send BUY / EXIT / MARK messages as JSON to your webhook (see README).
+
+//@version=6
+strategy("ATH Breakout · Hammer & Shooting Star", shorttitle = "ATH Hammer", overlay = true, initial_capital = 10000000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, process_orders_on_close = true, commission_type = strategy.commission.percent, commission_value = 0.0, max_bars_back = 60, max_labels_count = 500)
+
+// ---------- inputs ----------
+grpR = "Rules (keep in sync with the website)"
+maxRiskPct = input.float(10.0, "Max stop distance from entry (%)", minval = 0.5, group = grpR)
+maxExtPct = input.float(5.0, "Max distance above prior ATH at entry (%)", minval = 0.0, group = grpR)
+volMult = input.float(1.5, "Breakout volume (× 50-day average)", minval = 0.0, group = grpR)
+rrMult = input.float(3.0, "Reward : risk", minval = 0.5, group = grpR)
+waitBand = input.float(10.0, "WAIT zone below ATH (%)", minval = 0.0, group = grpR)
+minBars = input.int(300, "Minimum bars of history", minval = 50, group = grpR)
+grpA = "Alerts"
+webhookKey = input.string("change-me", "Webhook key (same as WEBHOOK_SECRET)", group = grpA)
+sendMarks = input.bool(true, "Send a daily price update for open trades", group = grpA)
+
+if not timeframe.isdaily
+    runtime.error("Use this strategy on a 1D (daily) chart.")
+
+// ---------- candle patterns ----------
+f_parts() =>
+    rng = high - low
+    body = math.abs(close - open)
+    up = high - math.max(open, close)
+    lo = math.min(open, close) - low
+    atrPrev = ta.sma(ta.tr(true), 14)[1]
+    big = rng >= 0.8 * atrPrev
+    [rng, body, up, lo, big]
+
+// Hammer: lower wick >= 2x body and >= 60% of range, small upper wick, decent size, at a fresh 5-bar low
+f_hammer() =>
+    [rng, body, up, lo, big] = f_parts()
+    lowest5 = ta.lowest(low, 5)[1]
+    lo >= 2 * body and lo >= 0.6 * rng and up <= 0.15 * rng and big and low <= lowest5
+
+// Shooting star: the mirror image, at a fresh 5-bar high
+f_star() =>
+    [rng, body, up, lo, big] = f_parts()
+    highest5 = ta.highest(high, 5)[1]
+    up >= 2 * body and up >= 0.6 * rng and lo <= 0.15 * rng and big and high >= highest5
+
+// Last 3 completed weeks (no lookahead: [1] with lookahead_on is the standard non-repainting form)
+f_week() =>
+    h = f_hammer()
+    s = f_star()
+    [h[1], low[1], h[2], low[2], h[3], low[3], s[1], high[1], s[2], high[2], s[3], high[3]]
+
+[wH1, wL1, wH2, wL2, wH3, wL3, wS1, wSH1, wS2, wSH2, wS3, wSH3] = request.security(syminfo.tickerid, "W", f_week(), lookahead = barmerge.lookahead_on)
+
+hamD = f_hammer()
+starD = f_star()
+
+// ---------- levels ----------
+var float athAll = na
+athAll := na(athAll) ? high : math.max(athAll, high)
+athP = athAll[10]                       // highest high before the last 10 sessions
+v50 = ta.sma(volume, 50)[1]             // 50-day average volume, excluding today
+
+var float wkLow = na                    // this week's low so far
+wkLow := timeframe.change("W") or na(wkLow) ? low : math.min(wkLow, low)
+
+// ---------- valid hammers (low not broken since) ----------
+float hamLow = na
+bool hasD = false
+bool anyHam = false
+float runMin = na
+for i = 0 to 9
+    if hamD[i]
+        anyHam := true
+        if i == 0 or runMin >= low[i]
+            hamLow := na(hamLow) ? low[i] : math.min(hamLow, low[i])
+            hasD := true
+    runMin := na(runMin) ? low[i] : math.min(runMin, low[i])
+
+bool hasW = false
+if wH1 or wH2 or wH3
+    anyHam := true
+if wH1 and wkLow >= wL1
+    hamLow := na(hamLow) ? wL1 : math.min(hamLow, wL1)
+    hasW := true
+if wH2 and math.min(wL1, wkLow) >= wL2
+    hamLow := na(hamLow) ? wL2 : math.min(hamLow, wL2)
+    hasW := true
+if wH3 and math.min(math.min(wL1, wL2), wkLow) >= wL3
+    hamLow := na(hamLow) ? wL3 : math.min(hamLow, wL3)
+    hasW := true
+validHam = hasD or hasW
+
+// ---------- shooting stars near the highs ----------
+float starHigh = na
+for i = 0 to 9
+    if starD[i]
+        starHigh := na(starHigh) ? high[i] : math.max(starHigh, high[i])
+if wS1
+    starHigh := na(starHigh) ? wSH1 : math.max(starHigh, wSH1)
+if wS2
+    starHigh := na(starHigh) ? wSH2 : math.max(starHigh, wSH2)
+if wS3
+    starHigh := na(starHigh) ? wSH3 : math.max(starHigh, wSH3)
+
+// ---------- breakout: first close above the prior ATH in the last 10 sessions ----------
+int bo = -1
+for k = 9 to 0
+    if bo == -1 and close[k] > athP
+        bo := k
+bi = math.max(bo, 0)
+boRng = high[bi] - low[bi]
+boVolX = bo >= 0 ? volume[bi] / v50[bi] : na
+boPos = bo >= 0 ? (boRng > 0 ? (close[bi] - low[bi]) / boRng : 1.0) : na
+
+// ---------- BUY rule ----------
+stopP = hamLow * 0.995
+riskP = close - stopP
+buySig = bar_index >= minBars and close > athP and (close / athP - 1) * 100 <= maxExtPct and bo >= 0 and boVolX >= volMult and boPos >= 0.6 and validHam and riskP > 0 and riskP / close * 100 <= maxRiskPct
+
+newClosed = strategy.closedtrades > nz(strategy.closedtrades[1])
+canBuy = buySig and strategy.position_size == 0 and not newClosed
+
+// ---------- alert messages (JSON) ----------
+f_num(x) => str.tostring(x, "#.##")
+f_msg(ev, extra) =>
+    nm = str.replace_all(syminfo.description, '"', "'")
+    '{"key":"' + webhookKey + '","event":"' + ev + '","sym":"' + syminfo.ticker + '","exchange":"' + syminfo.prefix + '","name":"' + nm + '","date":"' + str.format_time(time, "yyyy-MM-dd", "Asia/Kolkata") + '"' + extra + '}'
+
+// ---------- dummy trade: 1 share, stop under the hammer, 1:3 target ----------
+var float tStop = na
+var float tTarget = na
+var string tConf = ""
+if canBuy
+    tStop := stopP
+    tTarget := close + rrMult * riskP
+    tConf := hasD and hasW ? "High" : "Medium"
+    strategy.entry("Long", strategy.long, qty = 1)
+    alert(f_msg("BUY", ',"entry":' + f_num(close) + ',"stop":' + f_num(tStop) + ',"target":' + f_num(tTarget) + ',"conf":"' + tConf + '"'), alert.freq_once_per_bar_close)
+if strategy.position_size > 0 or canBuy
+    strategy.exit("Exit", from_entry = "Long", stop = tStop, limit = tTarget)
+
+if newClosed
+    xp = strategy.closedtrades.exit_price(strategy.closedtrades - 1)
+    reason = xp >= tTarget * 0.999 ? "Target hit" : xp <= tStop * 1.001 ? "Stop hit" : "Closed"
+    alert(f_msg("EXIT", ',"price":' + f_num(xp) + ',"reason":"' + reason + '"'), alert.freq_once_per_bar_close)
+else if sendMarks and strategy.position_size > 0 and not canBuy
+    alert(f_msg("MARK", ',"price":' + f_num(close)), alert.freq_once_per_bar_close)
+
+// ---------- chart ----------
+inTrade = strategy.position_size > 0
+plot(athP, "Prior ATH", color = color.new(color.gray, 0), style = plot.style_linebr)
+plot(inTrade ? tStop : na, "Stop", color = color.new(color.red, 0), style = plot.style_linebr, linewidth = 2)
+plot(inTrade ? tTarget : na, "Target", color = color.new(color.green, 0), style = plot.style_linebr, linewidth = 2)
+plotshape(hamD, "Hammer (daily)", shape.triangleup, location.belowbar, color.new(color.teal, 0), size = size.tiny)
+plotshape(starD, "Shooting star (daily)", shape.triangledown, location.abovebar, color.new(color.red, 0), size = size.tiny)
+newWeek = timeframe.change("W")
+plotshape(newWeek and wH1, "Hammer (weekly)", shape.labelup, location.belowbar, color.new(color.teal, 20), text = "W", textcolor = color.white, size = size.tiny)
+plotshape(newWeek and wS1, "Shooting star (weekly)", shape.labeldown, location.abovebar, color.new(color.red, 20), text = "W", textcolor = color.white, size = size.tiny)
+plotshape(canBuy, "BUY", shape.labelup, location.belowbar, color.new(color.green, 0), text = "BUY", textcolor = color.white, size = size.small)
+
+// ---------- status panel ----------
+var table tb = table.new(position.top_right, 2, 6, bgcolor = color.new(color.gray, 85), border_width = 1)
+if barstate.islast
+    pct = (close / athP - 1) * 100
+    string st = "No setup"
+    if validHam
+        st := close > athP and bo >= 0 ? (buySig ? "BUY" : "AVOID · breakout fails rules") : pct >= -waitBand ? "WAIT" : "No setup"
+    else if anyHam
+        st := "Invalidated"
+    starZone = not na(starHigh) and starHigh >= 0.95 * athP
+    if st != "BUY" and starZone
+        if close > athP and not validHam
+            st := "Breakout, no hammer"
+        else if close < starHigh
+            st := "AVOID · shooting star"
+    if inTrade
+        st := "IN TRADE"
+    stColor = st == "BUY" ? color.green : st == "IN TRADE" ? color.blue : st == "WAIT" ? color.orange : str.startswith(st, "AVOID") ? color.red : color.gray
+    tf = hasD and hasW ? "Daily + weekly" : hasD ? "Daily" : hasW ? "Weekly" : "None"
+    table.cell(tb, 0, 0, "Signal", text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(tb, 1, 0, st, text_color = color.white, bgcolor = stColor, text_size = size.small)
+    table.cell(tb, 0, 1, "Prior ATH", text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(tb, 1, 1, str.tostring(athP, format.mintick), text_size = size.small)
+    table.cell(tb, 0, 2, "Close vs ATH", text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(tb, 1, 2, str.tostring(pct, "#.0") + "%", text_size = size.small)
+    table.cell(tb, 0, 3, "Valid hammer", text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(tb, 1, 3, tf, text_size = size.small)
+    table.cell(tb, 0, 4, "Stop if bought", text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(tb, 1, 4, validHam ? str.tostring(stopP, format.mintick) + " (" + str.tostring(riskP / close * 100, "#.0") + "%)" : "—", text_size = size.small)
+    table.cell(tb, 0, 5, "Breakout volume", text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(tb, 1, 5, bo >= 0 ? str.tostring(boVolX, "#.0") + "× avg" : "No breakout", text_size = size.small)
